@@ -1,0 +1,100 @@
+post_install() {
+    echo "===> Waydroid Panthor config installed"
+    echo ""
+
+    # Reload systemd if available
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+
+        # Enable binder services (these need to run before waydroid)
+        systemctl enable dev-binderfs.mount
+        systemctl enable waydroid-binder-setup.service
+
+        # Check if we're on a booted system with GPU available
+        if ls /dev/dri/renderD* &>/dev/null; then
+            echo "     Detected booted system with GPU - initializing immediately..."
+
+            # Start binder services
+            systemctl start dev-binderfs.mount || true
+            systemctl start waydroid-binder-setup.service || true
+
+            # Run init immediately
+            if [ ! -f /var/lib/waydroid/.panthor-initialized ]; then
+                echo "     Running waydroid-panthor-init..."
+                /usr/local/bin/waydroid-panthor-init || true
+            else
+                echo "     Waydroid already initialized (flag file exists)"
+            fi
+        else
+            echo "     Running in chroot or no GPU - enabling first-boot service..."
+            systemctl enable waydroid-panthor-init.service
+            echo ""
+            echo "     The waydroid-panthor-init service will run on first boot"
+            echo "     to initialize Waydroid with the Panthor GPU."
+        fi
+    else
+        echo "     systemd not running - enable services manually after boot:"
+        echo "       sudo systemctl enable dev-binderfs.mount"
+        echo "       sudo systemctl enable waydroid-binder-setup.service"
+        echo "       sudo systemctl enable waydroid-panthor-init.service"
+    fi
+
+    # Copy desktop shortcut to arch user's Desktop if it exists
+    if [ -d /home/arch/Desktop ]; then
+        cp /usr/share/applications/waydroid-test.desktop /home/arch/Desktop/
+        chown 1000:1000 /home/arch/Desktop/waydroid-test.desktop 2>/dev/null || true
+        chmod 755 /home/arch/Desktop/waydroid-test.desktop 2>/dev/null || true
+        echo ""
+        echo "     Desktop shortcut installed to /home/arch/Desktop/"
+    fi
+
+    # Update desktop database
+    if command -v update-desktop-database &>/dev/null; then
+        update-desktop-database -q /usr/share/applications 2>/dev/null || true
+    fi
+
+    echo ""
+    echo "     To manually initialize (if service didn't run):"
+    echo "       sudo systemctl start waydroid-panthor-init"
+    echo ""
+    echo "     To test waydroid (run from GNOME desktop):"
+    echo "       waydroid-test"
+}
+
+post_upgrade() {
+    post_install
+}
+
+pre_remove() {
+    echo "===> Removing Waydroid Panthor config..."
+
+    if [ -d /run/systemd/system ]; then
+        # Stop waydroid services
+        systemctl stop waydroid-container.service 2>/dev/null || true
+        waydroid session stop 2>/dev/null || true
+
+        # Disable all waydroid-related services we installed
+        systemctl disable waydroid-panthor-init.service 2>/dev/null || true
+        systemctl disable waydroid-binder-setup.service 2>/dev/null || true
+        systemctl disable dev-binderfs.mount 2>/dev/null || true
+
+        # Stop binder services
+        systemctl stop waydroid-binder-setup.service 2>/dev/null || true
+        systemctl stop dev-binderfs.mount 2>/dev/null || true
+    fi
+
+    # Remove desktop shortcut
+    rm -f /home/arch/Desktop/waydroid-test.desktop 2>/dev/null || true
+
+    # Remove initialization flag (allows re-init on reinstall)
+    rm -f /var/lib/waydroid/.panthor-initialized 2>/dev/null || true
+
+    echo "     Waydroid data preserved in /var/lib/waydroid/"
+    echo "     To completely remove, run: sudo rm -rf /var/lib/waydroid/"
+}
+
+post_remove() {
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload
+    fi
+}

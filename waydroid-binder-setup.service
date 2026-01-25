@@ -1,0 +1,20 @@
+[Unit]
+Description=Create Waydroid binder devices
+After=dev-binderfs.mount
+Requires=dev-binderfs.mount
+Before=waydroid-container.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Create binder devices in binderfs with standard names that waydroid expects
+ExecStart=/bin/sh -c 'echo binder > /dev/binderfs/binder-control || true'
+ExecStart=/bin/sh -c 'echo hwbinder > /dev/binderfs/binder-control || true'
+ExecStart=/bin/sh -c 'echo vndbinder > /dev/binderfs/binder-control || true'
+# Create symlinks in /dev for compatibility
+ExecStart=/bin/ln -sf /dev/binderfs/binder /dev/binder
+ExecStart=/bin/ln -sf /dev/binderfs/hwbinder /dev/hwbinder
+ExecStart=/bin/ln -sf /dev/binderfs/vndbinder /dev/vndbinder
+
+[Install]
+WantedBy=multi-user.target

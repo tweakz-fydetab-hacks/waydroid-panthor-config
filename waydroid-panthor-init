@@ -1,0 +1,91 @@
+#!/bin/bash
+# waydroid-panthor-init: First-boot Waydroid initialization for Panthor GPU
+# This script runs once on first boot to initialize Waydroid with the correct
+# render device for the Panthor GPU (Mali G610).
+
+set -e
+
+FLAG_FILE="/var/lib/waydroid/.panthor-initialized"
+LOG_TAG="waydroid-panthor-init"
+
+log() {
+    echo "$1"
+    logger -t "$LOG_TAG" "$1"
+}
+
+# Check if already initialized
+if [ -f "$FLAG_FILE" ]; then
+    log "Waydroid Panthor already initialized, skipping"
+    exit 0
+fi
+
+log "Starting Waydroid Panthor initialization..."
+
+# Check that images exist
+if [ ! -f /var/lib/waydroid/images/system.img ] || [ ! -f /var/lib/waydroid/images/vendor.img ]; then
+    log "ERROR: Waydroid images not found in /var/lib/waydroid/images/"
+    exit 1
+fi
+
+# Check that binder devices are available
+if [ ! -e /dev/binder ]; then
+    log "ERROR: /dev/binder not found - binder setup service may not have run"
+    log "       Ensure dev-binderfs.mount and waydroid-binder-setup.service are started"
+    exit 1
+fi
+
+# Verify binder devices
+for dev in /dev/binder /dev/hwbinder /dev/vndbinder; do
+    if [ ! -e "$dev" ]; then
+        log "WARNING: $dev not found, waydroid may not work correctly"
+    else
+        log "Found binder device: $dev"
+    fi
+done
+
+# Find the Panthor render device
+RENDER_DEVICE=""
+for dev in /dev/dri/renderD*; do
+    if [ -e "$dev" ]; then
+        # Check if this is the Panthor device by looking at the driver
+        CARD_NUM=$(basename "$dev" | sed 's/renderD//')
+        CARD_PATH="/sys/class/drm/renderD${CARD_NUM}/device/driver"
+        if [ -L "$CARD_PATH" ]; then
+            DRIVER=$(basename "$(readlink "$CARD_PATH")")
+            if [ "$DRIVER" = "panthor" ]; then
+                RENDER_DEVICE="$dev"
+                log "Found Panthor render device: $RENDER_DEVICE (driver: $DRIVER)"
+                break
+            fi
+        fi
+    fi
+done
+
+if [ -z "$RENDER_DEVICE" ]; then
+    log "WARNING: Panthor render device not found, using default renderD128"
+    RENDER_DEVICE="/dev/dri/renderD128"
+fi
+
+# Initialize Waydroid with local images (offline init)
+log "Running waydroid init with pre-installed images..."
+waydroid init -i /var/lib/waydroid/images -s VANILLA -f
+
+# Verify LXC container was created
+if [ ! -d /var/lib/waydroid/lxc/waydroid ]; then
+    log "ERROR: LXC container was not created at /var/lib/waydroid/lxc/waydroid/"
+    log "       waydroid init may have failed silently"
+    exit 1
+fi
+log "LXC container created successfully"
+
+# Configure the render device in waydroid props
+log "Configuring Panthor render device: $RENDER_DEVICE"
+waydroid prop set persist.waydroid.render_device "$RENDER_DEVICE"
+
+# Enable GPU hardware acceleration
+waydroid prop set ro.hardware.gralloc gbm
+waydroid prop set ro.hardware.egl mesa
+
+# Create flag file to prevent re-running
+touch "$FLAG_FILE"
+log "Waydroid Panthor initialization complete!"

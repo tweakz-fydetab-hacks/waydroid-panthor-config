@@ -1,0 +1,15 @@
+[Unit]
+Description=Waydroid Panthor First-Boot Initialization
+After=local-fs.target dev-binderfs.mount waydroid-binder-setup.service
+Requires=dev-binderfs.mount waydroid-binder-setup.service
+ConditionPathExists=!/var/lib/waydroid/.panthor-initialized
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/waydroid-panthor-init
+RemainAfterExit=yes
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
