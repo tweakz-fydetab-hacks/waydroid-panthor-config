@@ -2,7 +2,6 @@
 Description=Android Binder Filesystem
 DefaultDependencies=no
 Before=waydroid-container.service
-ConditionPathExists=/sys/fs/binder
 
 [Mount]
 What=binder

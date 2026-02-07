@@ -10,6 +10,9 @@ post_install() {
         systemctl enable dev-binderfs.mount
         systemctl enable waydroid-binder-setup.service
 
+        # Enable waydroid container service (the daemon that session start connects to)
+        systemctl enable waydroid-container.service
+
         # Check if we're on a booted system with GPU available
         if ls /dev/dri/renderD* &>/dev/null; then
             echo "     Detected booted system with GPU - initializing immediately..."
@@ -25,6 +28,9 @@ post_install() {
             else
                 echo "     Waydroid already initialized (flag file exists)"
             fi
+
+            # Start the container service so sessions can connect
+            systemctl start waydroid-container.service || true
         else
             echo "     Running in chroot or no GPU - enabling first-boot service..."
             systemctl enable waydroid-panthor-init.service
@@ -42,7 +48,7 @@ post_install() {
     # Copy desktop shortcut to arch user's Desktop if it exists
     if [ -d /home/arch/Desktop ]; then
         cp /usr/share/applications/waydroid-test.desktop /home/arch/Desktop/
-        chown 1000:1000 /home/arch/Desktop/waydroid-test.desktop 2>/dev/null || true
+        chown 1001:1001 /home/arch/Desktop/waydroid-test.desktop 2>/dev/null || true
         chmod 755 /home/arch/Desktop/waydroid-test.desktop 2>/dev/null || true
         echo ""
         echo "     Desktop shortcut installed to /home/arch/Desktop/"
@@ -73,7 +79,8 @@ pre_remove() {
         systemctl stop waydroid-container.service 2>/dev/null || true
         waydroid session stop 2>/dev/null || true
 
-        # Disable all waydroid-related services we installed
+        # Disable all waydroid-related services we enabled
+        systemctl disable waydroid-container.service 2>/dev/null || true
         systemctl disable waydroid-panthor-init.service 2>/dev/null || true
         systemctl disable waydroid-binder-setup.service 2>/dev/null || true
         systemctl disable dev-binderfs.mount 2>/dev/null || true

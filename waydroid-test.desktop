@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
 Name=Waydroid Test
-Comment=Run Waydroid diagnostics and test Android container
-Exec=gnome-terminal -- /usr/local/bin/waydroid-test
-Icon=utilities-terminal
+Comment=Launch Waydroid session for testing
+Exec=bash -c 'if [ ! -f /var/lib/waydroid/waydroid.cfg ]; then notify-send -u critical "Waydroid" "Not initialized. Run: sudo systemctl start waydroid-panthor-init"; exit 1; fi; if [ ! -e /dev/binder ]; then notify-send -u critical "Waydroid" "Binder not available. Run: sudo systemctl start dev-binderfs.mount waydroid-binder-setup"; exit 1; fi; waydroid session start && waydroid show-full-ui || notify-send -u critical "Waydroid" "Session failed. Check: journalctl -u waydroid-container"'
+Icon=waydroid
 Terminal=false
-Categories=System;Utility;
-Keywords=waydroid;android;test;diagnostic;
+Categories=System;
+Keywords=android;waydroid;test;
