@@ -6,18 +6,17 @@ pkgdesc="Waydroid configuration and services for Panthor GPU (FydeTab Duo)"
 arch=('aarch64')
 url="https://github.com/tweakz-fydetab-hacks/tweakz-fydetab-hacks"
 license=('MIT')
-depends=('waydroid' 'waydroid-panthor-images')
+depends=('waydroid')
+optdepends=('waydroid-panthor-images: Pre-built Android images with Panthor GPU support')
 install=${pkgname}.install
 
 source=("dev-binderfs.mount"
         "waydroid-binder-setup.service"
         "waydroid-panthor-init"
         "waydroid-panthor-init.service"
-        "waydroid-test"
-        "waydroid-test.desktop"
-        "waydroid.conf")
+        "waydroid.conf"
+        "waydroid-test.desktop")
 sha256sums=('SKIP'
-            'SKIP'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -41,8 +40,14 @@ package() {
 
     # Install scripts
     install -Dm755 "${srcdir}/waydroid-panthor-init" "${pkgdir}/usr/local/bin/waydroid-panthor-init"
-    install -Dm755 "${srcdir}/waydroid-test" "${pkgdir}/usr/local/bin/waydroid-test"
 
     # Install desktop file
     install -Dm644 "${srcdir}/waydroid-test.desktop" "${pkgdir}/usr/share/applications/waydroid-test.desktop"
+
+    # Create preinstalled images symlink so waydroid auto-detects images from
+    # waydroid-panthor-images and sets OTA to "None" (no network downloads).
+    # Waydroid checks /usr/share/waydroid-extra/images/ for preinstalled images.
+    # Removing this package removes the symlink, restoring stock download behavior.
+    install -dm755 "${pkgdir}/usr/share/waydroid-extra"
+    ln -s /var/lib/waydroid/images "${pkgdir}/usr/share/waydroid-extra/images"
 }

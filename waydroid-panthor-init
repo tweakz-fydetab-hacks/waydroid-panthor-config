@@ -2,11 +2,20 @@
 # waydroid-panthor-init: First-boot Waydroid initialization for Panthor GPU
 # This script runs once on first boot to initialize Waydroid with the correct
 # render device for the Panthor GPU (Mali G610).
+#
+# Requires: waydroid-panthor-images package (provides system.img + vendor.img)
+#
+# This service NEVER downloads images. If images are missing, it fails fast.
+# The PKGBUILD installs a symlink at /usr/share/waydroid-extra/images pointing
+# to /var/lib/waydroid/images, which makes waydroid's preinstalled image
+# detection kick in and set OTA to "None" (no network downloads).
 
 set -e
 
 FLAG_FILE="/var/lib/waydroid/.panthor-initialized"
 LOG_TAG="waydroid-panthor-init"
+IMAGES_DIR="/var/lib/waydroid/images"
+PREINSTALLED_LINK="/usr/share/waydroid-extra/images"
 
 log() {
     echo "$1"
@@ -21,9 +30,20 @@ fi
 
 log "Starting Waydroid Panthor initialization..."
 
-# Check that images exist
-if [ ! -f /var/lib/waydroid/images/system.img ] || [ ! -f /var/lib/waydroid/images/vendor.img ]; then
-    log "ERROR: Waydroid images not found in /var/lib/waydroid/images/"
+# Require pre-installed images — this service never downloads.
+# Install waydroid-panthor-images to provide the Panthor-compatible images.
+if [ ! -f "$IMAGES_DIR/system.img" ] || [ ! -f "$IMAGES_DIR/vendor.img" ]; then
+    log "ERROR: Waydroid images not found in $IMAGES_DIR"
+    log "       Install waydroid-panthor-images to provide Panthor-compatible images"
+    exit 1
+fi
+log "Found pre-installed images in $IMAGES_DIR"
+
+# Verify the preinstalled images symlink exists. Without it, waydroid init
+# won't recognize the images as preinstalled and will try to download.
+if [ ! -e "$PREINSTALLED_LINK" ]; then
+    log "ERROR: Preinstalled images symlink missing at $PREINSTALLED_LINK"
+    log "       The waydroid-panthor-config package may need reinstalling"
     exit 1
 fi
 
@@ -66,9 +86,13 @@ if [ -z "$RENDER_DEVICE" ]; then
     RENDER_DEVICE="/dev/dri/renderD128"
 fi
 
-# Initialize Waydroid with local images (offline init)
+# Initialize Waydroid using pre-installed images.
+# The symlink at /usr/share/waydroid-extra/images makes waydroid detect them
+# as preinstalled, which sets OTA to "None" — no network downloads occur.
+# Do NOT pass -f (forces redownload) or -i (bypasses preinstalled detection).
+rm -f /var/lib/waydroid/waydroid.cfg
 log "Running waydroid init with pre-installed images..."
-waydroid init -i /var/lib/waydroid/images -s VANILLA -f
+waydroid init
 
 # Verify LXC container was created
 if [ ! -d /var/lib/waydroid/lxc/waydroid ]; then
@@ -78,13 +102,51 @@ if [ ! -d /var/lib/waydroid/lxc/waydroid ]; then
 fi
 log "LXC container created successfully"
 
-# Configure the render device in waydroid props
-log "Configuring Panthor render device: $RENDER_DEVICE"
-waydroid prop set persist.waydroid.render_device "$RENDER_DEVICE"
+# Patch LXC config_nodes to bind the correct render device into the container.
+# waydroid init defaults to renderD128, but on RK3588 the Panthor GPU is
+# typically at a higher number (e.g., renderD130). Without this, the Android
+# container cannot access the Panthor GPU at all.
+NODES_FILE="/var/lib/waydroid/lxc/waydroid/config_nodes"
+RENDER_BASENAME=$(basename "$RENDER_DEVICE")
+if [ -f "$NODES_FILE" ] && [ "$RENDER_DEVICE" != "/dev/dri/renderD128" ]; then
+    if grep -q "renderD128" "$NODES_FILE" && ! grep -q "$RENDER_BASENAME" "$NODES_FILE"; then
+        sed -i "s|/dev/dri/renderD128 dev/dri/renderD128|$RENDER_DEVICE dev/dri/$RENDER_BASENAME|g" "$NODES_FILE"
+        log "Patched config_nodes: renderD128 -> $RENDER_BASENAME"
+    fi
+fi
 
-# Enable GPU hardware acceleration
-waydroid prop set ro.hardware.gralloc gbm
-waydroid prop set ro.hardware.egl mesa
+# Patch gralloc.gbm.device in waydroid_base.prop and waydroid.prop.
+# waydroid init hardcodes renderD128, but gralloc must use the Panthor device.
+for PROP_FILE in /var/lib/waydroid/waydroid_base.prop /var/lib/waydroid/waydroid.prop; do
+    if [ -f "$PROP_FILE" ]; then
+        if grep -q "gralloc.gbm.device=/dev/dri/renderD128" "$PROP_FILE"; then
+            sed -i "s|gralloc.gbm.device=/dev/dri/renderD128|gralloc.gbm.device=$RENDER_DEVICE|g" "$PROP_FILE"
+            log "Patched gralloc.gbm.device in $(basename "$PROP_FILE") -> $RENDER_DEVICE"
+        fi
+    fi
+done
+
+# Configure properties directly in waydroid.cfg since the container
+# service may not be running yet (waydroid prop set requires D-Bus).
+CFG_FILE="/var/lib/waydroid/waydroid.cfg"
+log "Configuring Panthor render device: $RENDER_DEVICE"
+if [ -f "$CFG_FILE" ]; then
+    python3 -c "
+import configparser
+cfg = configparser.ConfigParser()
+cfg.read('$CFG_FILE')
+if not cfg.has_section('properties'):
+    cfg.add_section('properties')
+cfg.set('properties', 'persist.waydroid.render_device', '$RENDER_DEVICE')
+cfg.set('properties', 'ro.hardware.gralloc', 'gbm')
+cfg.set('properties', 'ro.hardware.egl', 'mesa')
+with open('$CFG_FILE', 'w') as f:
+    cfg.write(f)
+"
+    log "Properties written to $CFG_FILE"
+else
+    log "WARNING: $CFG_FILE not found, cannot set properties"
+fi
 
 # Create flag file to prevent re-running
 touch "$FLAG_FILE"
